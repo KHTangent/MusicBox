@@ -1,22 +1,26 @@
 mod commands;
 
-use dotenv;
-use serenity::client::bridge::gateway::ShardManager;
-use serenity::framework::standard::{
-	help_commands, Args, CommandGroup, CommandResult, HelpOptions,
-};
-use serenity::model::prelude::{Message, UserId};
 use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 
+use dotenv;
+
 use serenity::async_trait;
+use serenity::client::bridge::gateway::ShardManager;
 use serenity::framework::standard::macros::{group, help};
+use serenity::framework::standard::{
+	help_commands, Args, CommandGroup, CommandResult, HelpOptions,
+};
 use serenity::framework::StandardFramework;
 use serenity::model::gateway::Ready;
+use serenity::model::prelude::{Message, UserId};
 use serenity::prelude::*;
 
+use songbird::SerenityInit;
+
 use crate::commands::hello::*;
+use crate::commands::music::*;
 
 pub struct ShardManagerContainer;
 impl TypeMapKey for ShardManagerContainer {
@@ -35,6 +39,10 @@ impl EventHandler for Handler {
 #[group]
 #[commands(hello)]
 struct General;
+
+#[group]
+#[commands(play, stop)]
+struct Music;
 
 #[help]
 async fn help_command(
@@ -58,19 +66,24 @@ async fn main() {
 		10,
 	)
 	.expect("OWNER must be a valid integer");
+	let prefix = env::var("PREFIX").unwrap_or(".".to_string());
 	let framework = StandardFramework::new()
 		.configure(|c| {
 			c.owners(vec![UserId(owner)].into_iter().collect())
-				.prefix(".")
+				.prefix(prefix)
 		})
 		.group(&GENERAL_GROUP)
+		.group(&MUSIC_GROUP)
 		.help(&HELP_COMMAND);
 
-	let intents = GatewayIntents::GUILD_MESSAGES
+	let intents = GatewayIntents::GUILDS
+		| GatewayIntents::GUILD_VOICE_STATES
+		| GatewayIntents::GUILD_MESSAGES
 		| GatewayIntents::DIRECT_MESSAGES
 		| GatewayIntents::MESSAGE_CONTENT;
 	let mut client = Client::builder(&token, intents)
 		.framework(framework)
+		.register_songbird()
 		.event_handler(Handler)
 		.await
 		.expect("Failed to create client");
