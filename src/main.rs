@@ -2,12 +2,16 @@ mod commands;
 
 use dotenv;
 use serenity::client::bridge::gateway::ShardManager;
-use serenity::model::prelude::UserId;
+use serenity::framework::standard::{
+	help_commands, Args, CommandGroup, CommandResult, HelpOptions,
+};
+use serenity::model::prelude::{Message, UserId};
+use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 
 use serenity::async_trait;
-use serenity::framework::standard::macros::group;
+use serenity::framework::standard::macros::{group, help};
 use serenity::framework::StandardFramework;
 use serenity::model::gateway::Ready;
 use serenity::prelude::*;
@@ -32,6 +36,19 @@ impl EventHandler for Handler {
 #[commands(hello)]
 struct General;
 
+#[help]
+async fn help_command(
+	context: &Context,
+	msg: &Message,
+	args: Args,
+	help_options: &'static HelpOptions,
+	groups: &[&'static CommandGroup],
+	owners: HashSet<UserId>,
+) -> CommandResult {
+	let _ = help_commands::with_embeds(context, msg, args, help_options, groups, owners).await;
+	Ok(())
+}
+
 #[tokio::main]
 async fn main() {
 	dotenv::dotenv().ok();
@@ -46,7 +63,9 @@ async fn main() {
 			c.owners(vec![UserId(owner)].into_iter().collect())
 				.prefix(".")
 		})
-		.group(&GENERAL_GROUP);
+		.group(&GENERAL_GROUP)
+		.help(&HELP_COMMAND);
+
 	let intents = GatewayIntents::GUILD_MESSAGES
 		| GatewayIntents::DIRECT_MESSAGES
 		| GatewayIntents::MESSAGE_CONTENT;

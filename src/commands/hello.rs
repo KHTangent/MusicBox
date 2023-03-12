@@ -4,6 +4,7 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 
 #[command]
+#[description("Reply with hallo")]
 pub async fn hello(ctx: &Context, msg: &Message) -> CommandResult {
 	msg.channel_id
 		.say(&ctx.http, format!("Hallo {}", msg.author.name))
