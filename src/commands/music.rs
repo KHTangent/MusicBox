@@ -1,9 +1,34 @@
 use serenity::framework::standard::macros::command;
 use serenity::framework::standard::{Args, CommandResult};
+use serenity::http::Http;
 use serenity::model::prelude::*;
-use serenity::prelude::*;
-use songbird::Call;
+use serenity::{async_trait, prelude::*};
+use songbird::input::{Input, Restartable};
+use songbird::{Call, Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use std::sync::Arc;
+
+struct TrackEndNotifier {
+	channel_id: ChannelId,
+	http: Arc<Http>,
+}
+
+#[async_trait]
+impl VoiceEventHandler for TrackEndNotifier {
+	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+		if let EventContext::Track(&[(_track_state, track_handle)]) = ctx {
+			let title = track_handle
+				.metadata()
+				.title
+				.clone()
+				.unwrap_or("Unknown video".to_string());
+			self.channel_id
+				.say(&self.http, format!("Finished playing track **{}**", title))
+				.await
+				.ok();
+		}
+		None
+	}
+}
 
 #[command]
 #[only_in(guilds)]
@@ -12,7 +37,9 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 	let url = match args.single_quoted::<String>() {
 		Ok(u) => u,
 		Err(_) => {
-			msg.channel_id.say(&ctx.http, "Please provide an URL").await?;
+			msg.channel_id
+				.say(&ctx.http, "Please provide an URL")
+				.await?;
 			return Ok(());
 		}
 	};
@@ -33,18 +60,34 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 	};
 	let mut handler = handler_lock.lock().await;
 
-	let source = match songbird::ytdl(&url).await {
-		Ok(s) => s,
+	let source: Input = match Restartable::ytdl(url, true).await {
+		Ok(s) => s.into(),
 		Err(e) => {
 			println!("Error fetching YTDL: {}", e);
 			msg.channel_id.say(&ctx.http, "Error fetching URL").await?;
 			return Ok(());
 		}
 	};
-	let title = source.metadata.title.clone().unwrap_or("Unknown video".to_string());
-	handler.play_only_source(source);
-	msg.channel_id.say(&ctx.http, format!("Playing **{}**", &title)).await?;
-
+	let title = source
+		.metadata
+		.title
+		.clone()
+		.unwrap_or("Unknown video".to_string());
+	let stream_handler = handler.play_only_source(source);
+	if let Err(e) = stream_handler.add_event(
+		Event::Track(TrackEvent::End),
+		TrackEndNotifier {
+			channel_id: msg.channel_id,
+			http: Arc::clone(&ctx.http),
+		},
+	) {
+		println!("Error adding event: {}", e);
+		msg.channel_id.say(&ctx.http, "Internal error").await?;
+		return Ok(());
+	}
+	msg.channel_id
+		.say(&ctx.http, format!("Playing **{}**", &title))
+		.await?;
 	Ok(())
 }
 
@@ -59,7 +102,9 @@ pub async fn stop(ctx: &Context, msg: &Message) -> CommandResult {
 		.clone();
 	if songbird_manager.get(guild.id).is_some() {
 		if let Err(_) = songbird_manager.remove(guild.id).await {
-			msg.channel_id.say(&ctx.http, "Failed to leave channel").await?;
+			msg.channel_id
+				.say(&ctx.http, "Failed to leave channel")
+				.await?;
 		}
 	}
 	Ok(())
