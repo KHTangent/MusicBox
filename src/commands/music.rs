@@ -7,6 +7,29 @@ use songbird::input::{Input, Restartable};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, Songbird, TrackEvent};
 use std::sync::Arc;
 
+struct TrackStartNotifier {
+	channel_id: ChannelId,
+	http: Arc<Http>,
+}
+
+#[async_trait]
+impl VoiceEventHandler for TrackStartNotifier {
+	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+		if let EventContext::Track(&[(_track_state, track_handle)]) = ctx {
+			let title = track_handle
+				.metadata()
+				.title
+				.clone()
+				.unwrap_or("Unknown video".to_string());
+			self.channel_id
+				.say(&self.http, format!("Now playing **{}**", title))
+				.await
+				.ok();
+		}
+		None
+	}
+}
+
 struct TrackEndNotifier {
 	channel_id: ChannelId,
 	guild_id: GuildId,
@@ -28,17 +51,20 @@ impl VoiceEventHandler for TrackEndNotifier {
 				.await
 				.ok();
 			let drop_call = match self.manager.get(self.guild_id) {
-				Some(call) => match call.lock().await.leave().await {
-					Ok(_) => true,
-					Err(e) => {
-						println!("Error leaving channel: {}", e);
-						self.channel_id
-							.say(&self.http, "Failed to leave voice channel")
-							.await
-							.ok();
+				Some(call) => {
+					let mut handler = call.lock().await;
+					if handler.queue().len() == 0 {
+						match handler.leave().await {
+							Ok(_) => true,
+							Err(e) => {
+								println!("Error leaving channel: {}", e);
+								false
+							}
+						}
+					} else {
 						false
 					}
-				},
+				}
 				None => false,
 			};
 			if drop_call {
@@ -98,8 +124,29 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		.title
 		.clone()
 		.unwrap_or("Unknown video".to_string());
+	if handler.queue().len() == 0 {
+		// Others will be announced by TrackStartNotifier
+		msg.channel_id
+			.say(&ctx.http, format!("Playing **{}**", &title))
+			.await?;
+	} else {
+		msg.channel_id
+			.say(&ctx.http, format!("Queueing **{}**", &title))
+			.await?;
+	}
 	let stream_handler = handler.enqueue_source(source);
 
+	if let Err(e) = stream_handler.add_event(
+		Event::Track(TrackEvent::Play),
+		TrackStartNotifier {
+			channel_id: msg.channel_id,
+			http: Arc::clone(&ctx.http),
+		},
+	) {
+		println!("Error adding event: {}", e);
+		msg.channel_id.say(&ctx.http, "Internal error").await?;
+		return Ok(());
+	}
 	if let Err(e) = stream_handler.add_event(
 		Event::Track(TrackEvent::End),
 		TrackEndNotifier {
@@ -113,9 +160,6 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		msg.channel_id.say(&ctx.http, "Internal error").await?;
 		return Ok(());
 	}
-	msg.channel_id
-		.say(&ctx.http, format!("Playing **{}**", &title))
-		.await?;
 	Ok(())
 }
 
