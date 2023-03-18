@@ -78,19 +78,28 @@ impl VoiceEventHandler for TrackEndNotifier {
 #[command]
 #[only_in(guilds)]
 #[description("Play an URL")]
-pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-	let url = match args.single_quoted::<String>() {
-		Ok(u) => u,
-		Err(_) => {
-			msg.channel_id
-				.say(&ctx.http, "Please provide an URL")
-				.await?;
-			return Ok(());
+pub async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+	let query = args.message().to_string();
+	let is_url = query.starts_with("https://youtu") || query.starts_with("https://www.youtu");
+	let source: Input;
+	if is_url {
+		source = match Restartable::ytdl(query, true).await {
+			Ok(s) => s.into(),
+			Err(e) => {
+				println!("Error fetching YTDL using URL: {}", e);
+				msg.channel_id.say(&ctx.http, "Error fetching URL").await?;
+				return Ok(());
+			}
+		};
+	} else {
+		source = match Restartable::ytdl_search(query, true).await {
+			Ok(s) => s.into(),
+			Err(e) => {
+				println!("Error searching: {}", e);
+				msg.channel_id.say(&ctx.http, "Error getting video").await?;
+				return Ok(());
+			}
 		}
-	};
-	if !url.starts_with("https://youtu") && !url.starts_with("https://www.youtu") {
-		msg.channel_id.say(&ctx.http, "Invalid YouTube URL").await?;
-		return Ok(());
 	}
 	if let Err(e) = ensure_voice_connected(ctx, msg).await {
 		msg.channel_id.say(&ctx.http, e).await?;
@@ -110,15 +119,6 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		}
 	};
 	let mut handler = handler_lock.lock().await;
-
-	let source: Input = match Restartable::ytdl(url, true).await {
-		Ok(s) => s.into(),
-		Err(e) => {
-			println!("Error fetching YTDL: {}", e);
-			msg.channel_id.say(&ctx.http, "Error fetching URL").await?;
-			return Ok(());
-		}
-	};
 	let title = source
 		.metadata
 		.title
