@@ -98,7 +98,8 @@ pub async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		.title
 		.clone()
 		.unwrap_or("Unknown video".to_string());
-	let stream_handler = handler.play_only_source(source);
+	let stream_handler = handler.enqueue_source(source);
+
 	if let Err(e) = stream_handler.add_event(
 		Event::Track(TrackEvent::End),
 		TrackEndNotifier {
@@ -131,6 +132,72 @@ pub async fn stop(ctx: &Context, msg: &Message) -> CommandResult {
 		if let Err(_) = songbird_manager.remove(guild.id).await {
 			msg.channel_id
 				.say(&ctx.http, "Failed to leave channel")
+				.await?;
+		}
+	}
+	Ok(())
+}
+
+#[command]
+#[only_in(guilds)]
+#[aliases("np", "now")]
+#[description("Display currently playing track")]
+pub async fn now_playing(ctx: &Context, msg: &Message) -> CommandResult {
+	let guild = msg.guild(&ctx.cache).ok_or("Failed to retrieve guild")?;
+	let songbird_manager = songbird::get(ctx)
+		.await
+		.ok_or("Internal error".to_string())?
+		.clone();
+	let handler_lock = match songbird_manager.get(guild.id) {
+		Some(h) => h,
+		None => {
+			msg.channel_id
+				.say(&ctx.http, "Not in a voice channel")
+				.await?;
+			return Ok(());
+		}
+	};
+	let handler = handler_lock.lock().await;
+	match handler.queue().current() {
+		Some(track) => {
+			let title = track
+				.metadata()
+				.title
+				.clone()
+				.unwrap_or("Unknown video".to_string());
+			let duration = track
+				.metadata()
+				.duration
+				.and_then(|d| {
+					let secs = d.as_secs();
+					let minutes = secs / 60;
+					let seconds = secs % 60;
+					Some(format!("{}:{:0>2}", minutes, seconds))
+				})
+				.unwrap_or("??:??".to_string());
+			let progress = track
+				.get_info()
+				.await
+				.and_then(|ts| {
+					let secs = ts.position.as_secs();
+					let minutes = secs / 60;
+					let seconds = secs % 60;
+					Ok(format!("{}:{:0>2}", minutes, seconds))
+				})
+				.unwrap_or("??:??".to_string());
+			msg.channel_id
+				.say(
+					&ctx.http,
+					format!(
+						"Currently playing **{}**\nProgress: {} / {}",
+						title, progress, duration
+					),
+				)
+				.await?;
+		}
+		None => {
+			msg.channel_id
+				.say(&ctx.http, "Nothing is currently playing")
 				.await?;
 		}
 	}
