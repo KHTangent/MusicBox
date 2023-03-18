@@ -41,7 +41,7 @@ impl EventHandler for Handler {
 struct General;
 
 #[group]
-#[commands(play, stop, now_playing)]
+#[commands(play, stop, now_playing, skip)]
 struct Music;
 
 #[help]

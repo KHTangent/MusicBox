@@ -248,6 +248,35 @@ pub async fn now_playing(ctx: &Context, msg: &Message) -> CommandResult {
 	Ok(())
 }
 
+#[command]
+#[only_in(guilds)]
+#[aliases("s")]
+#[description("Skip currently playing track")]
+pub async fn skip(ctx: &Context, msg: &Message) -> CommandResult {
+	let guild = msg.guild(&ctx.cache).ok_or("Failed to retrieve guild")?;
+	let songbird_manager = songbird::get(ctx)
+		.await
+		.ok_or("Internal error".to_string())?
+		.clone();
+	let handler_lock = match songbird_manager.get(guild.id) {
+		Some(h) => h,
+		None => {
+			msg.channel_id
+				.say(&ctx.http, "Not in a voice channel")
+				.await?;
+			return Ok(());
+		}
+	};
+	let handler = handler_lock.lock().await;
+	if let Err(e) = handler.queue().skip() {
+		println!("Error skipping track: {}", e);
+		msg.channel_id
+			.say(&ctx.http, "The track is not skippable! Have fun")
+			.await?;
+	}
+	Ok(())
+}
+
 async fn ensure_voice_connected(ctx: &Context, msg: &Message) -> Result<(), String> {
 	let guild = msg.guild(&ctx.cache).ok_or("Failed to retrieve guild")?;
 	let channel_id = guild
