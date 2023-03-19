@@ -6,6 +6,7 @@ use serenity::{async_trait, prelude::*};
 use songbird::input::{Input, Restartable};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, Songbird, TrackEvent};
 use std::sync::Arc;
+use std::time::Duration;
 
 struct TrackStartNotifier {
 	channel_id: ChannelId,
@@ -277,6 +278,63 @@ pub async fn skip(ctx: &Context, msg: &Message) -> CommandResult {
 	Ok(())
 }
 
+#[command]
+#[only_in(guilds)]
+#[description("Seek to a specific timestamp in the current track")]
+#[usage("<mm:ss>")]
+pub async fn seek(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
+	let ts_arg = match args.single::<String>() {
+		Ok(s) => s,
+		Err(_) => {
+			msg.channel_id
+				.say(&ctx.http, "Please provide a valid timestamp")
+				.await?;
+			return Ok(());
+		}
+	};
+	let seek_to = match timestamp_to_seconds(&ts_arg) {
+		Ok(s) => Duration::from_secs(s),
+		Err(e) => {
+			msg.channel_id.say(&ctx.http, e).await?;
+			return Ok(());
+		}
+	};
+	let guild = msg.guild(&ctx.cache).ok_or("Failed to retrieve guild")?;
+	let songbird_manager = songbird::get(ctx)
+		.await
+		.ok_or("Internal error".to_string())?
+		.clone();
+	let handler_lock = match songbird_manager.get(guild.id) {
+		Some(h) => h,
+		None => {
+			msg.channel_id
+				.say(&ctx.http, "Not in a voice channel")
+				.await?;
+			return Ok(());
+		}
+	};
+	let handler = handler_lock.lock().await;
+	if let Some(track) = handler.queue().current() {
+		if track.is_seekable() {
+			if let Err(e) = track.seek_time(seek_to) {
+				println!("Error seeking track: {}", e);
+				msg.channel_id
+					.say(&ctx.http, "Failed to seek track")
+					.await?;
+			}
+		} else {
+			msg.channel_id
+				.say(&ctx.http, "Track is not seekable")
+				.await?;
+		}
+	} else {
+		msg.channel_id
+			.say(&ctx.http, "Nothing is currently playing")
+			.await?;
+	}
+	Ok(())
+}
+
 async fn ensure_voice_connected(ctx: &Context, msg: &Message) -> Result<(), String> {
 	let guild = msg.guild(&ctx.cache).ok_or("Failed to retrieve guild")?;
 	let channel_id = guild
@@ -290,4 +348,23 @@ async fn ensure_voice_connected(ctx: &Context, msg: &Message) -> Result<(), Stri
 		.clone();
 	let _handler = songbird_manager.join(guild.id, channel_id).await;
 	Ok(())
+}
+
+fn timestamp_to_seconds(ts: &str) -> Result<u64, String> {
+	let mut parts = ts.split(':');
+	let minutes = match parts.next() {
+		Some(s) => match s.parse::<u64>() {
+			Ok(n) => n,
+			Err(_) => return Err("Invalid timestamp, use `mm:ss`".to_string()),
+		},
+		None => return Err("Invalid timestamp, use `mm:ss`".to_string()),
+	};
+	let seconds = match parts.next() {
+		Some(s) => match s.parse::<u64>() {
+			Ok(n) => n,
+			Err(_) => return Err("Invalid timestamp, use `mm:ss`".to_string()),
+		},
+		None => return Err("Invalid timestamp, use `mm:ss`".to_string()),
+	};
+	Ok(minutes * 60 + seconds)
 }
