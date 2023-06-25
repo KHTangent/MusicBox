@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use dotenv;
 
+use env_logger;
+
 use serenity::async_trait;
 use serenity::client::bridge::gateway::ShardManager;
 use serenity::framework::standard::macros::{group, help};
@@ -59,6 +61,7 @@ async fn help_command(
 
 #[tokio::main]
 async fn main() {
+	env_logger::init();
 	dotenv::dotenv().ok();
 	let token = env::var("TOKEN").expect("Set a token in the TOKEN env variable");
 	let owner = u64::from_str_radix(
